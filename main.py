@@ -1,32 +1,26 @@
 import json
-import logging
 import asyncio
 import pandas as pd
-from datetime import datetime
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from analyzer import analyze_last_candle
-from fastapi import FastAPI
-from threading import Thread
 
 TOKEN = "7599460125:AAENWUkKQceP9O9kZn8y1SGQzaczmPpZWsA"
-WEBHOOK_PATH = "/webhook/telegram"
-WEBHOOK_URL = "https://your-render-url.onrender.com" + WEBHOOK_PATH
-PORT = 8080
 CHAT_ID_FILE = "chat_id.txt"
+CONFIG_FILE = "config.json"
 
 def load_config():
-    with open("config.json", "r") as f:
+    with open(CONFIG_FILE, "r") as f:
         return json.load(f)
 
 def save_config(config):
-    with open("config.json", "w") as f:
+    with open(CONFIG_FILE, "w") as f:
         json.dump(config, f)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     with open(CHAT_ID_FILE, "w") as f:
         f.write(str(update.effective_chat.id))
-    await update.message.reply_text("✅ Bot is active. Every 5 minutes it checks for the latest signal.")
+    await update.message.reply_text("✅ Bot is active. It will check for new signals every 5 minutes.")
 
 async def view_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
     config = load_config()
@@ -48,45 +42,39 @@ async def set_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         await update.message.reply_text("❌ Invalid format. Example:\n/setconfig 1 1 3,8 3,10 3,11")
 
-app = FastAPI()
+async def signal_check_loop(app):
+    while True:
+        try:
+            config = load_config()
+            result = analyze_last_candle(config["a"], config["b"], config["combos"])
+            if result:
+                with open(CHAT_ID_FILE, "r") as f:
+                    chat_id = int(f.read().strip())
+                text = (
+                    f"📈 Signal: {result['direction'].upper()}\n"
+                    f"Entry: {result['entry']:.2f}\n"
+                    f"TP: {result['tp']:.2f}\n"
+                    f"SL: {result['sl']:.2f}\n"
+                    f"Leverage: {result['leverage']}x"
+                )
+                await app.bot.send_message(chat_id=chat_id, text=text)
+        except Exception as e:
+            print("Error in signal loop:", e)
+        await asyncio.sleep(300)
 
-@app.post("/wake")
-async def wake():
-    return {"status": "alive"}
-
-def start_bot():
+async def main():
     application = ApplicationBuilder().token(TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("viewconfig", view_config))
     application.add_handler(CommandHandler("setconfig", set_config))
 
-    async def check_loop():
-        await application.bot.set_webhook(url=WEBHOOK_URL)
-        while True:
-            try:
-                config = load_config()
-                result = analyze_last_candle(config["a"], config["b"], config["combos"])
-                if result:
-                    with open(CHAT_ID_FILE, "r") as f:
-                        chat_id = int(f.read().strip())
-                    text = (
-                        f"📈 Signal: {result['direction'].upper()}\n"
-                        f"Entry: {result['entry']:.2f}\n"
-                        f"TP: {result['tp']:.2f}\n"
-                        f"SL: {result['sl']:.2f}\n"
-                        f"Leverage: {result['leverage']}x"
-                    )
-                    await application.bot.send_message(chat_id=chat_id, text=text)
-            except Exception as e:
-                print("Error during check_loop:", e)
-            await asyncio.sleep(300)
-
-    async def main():
-        await check_loop()
-
-    Thread(target=lambda: asyncio.run(main())).start()
-    application.run_webhook(listen="0.0.0.0", port=PORT, webhook_path=WEBHOOK_PATH)
+    # Start polling and background task
+    async with application:
+        await application.start()
+        asyncio.create_task(signal_check_loop(application))
+        await application.updater.start_polling()
+        await application.updater.idle()
 
 if __name__ == "__main__":
-    start_bot()
+    asyncio.run(main())
