@@ -1,10 +1,27 @@
 import json
 import asyncio
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
 import pandas as pd
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from analyzer import analyze_last_candle
 
+# Start a dummy HTTP server on port 10000 to keep Render happy
+class DummyHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"I'm alive!")
+
+def run_dummy_server():
+    server = HTTPServer(("0.0.0.0", 10000), DummyHandler)
+    server.serve_forever()
+
+threading.Thread(target=run_dummy_server, daemon=True).start()
+
+# Telegram Bot Logic
 TOKEN = "7599460125:AAENWUkKQceP9O9kZn8y1SGQzaczmPpZWsA"
 CHAT_ID_FILE = "chat_id.txt"
 CONFIG_FILE = "config.json"
@@ -69,7 +86,6 @@ async def main():
     application.add_handler(CommandHandler("viewconfig", view_config))
     application.add_handler(CommandHandler("setconfig", set_config))
 
-    # Start polling and background task
     async with application:
         await application.start()
         asyncio.create_task(signal_check_loop(application))
