@@ -1,38 +1,23 @@
 import json
-import asyncio
-import threading
 import os
-from http.server import BaseHTTPRequestHandler, HTTPServer
-
+import asyncio
 import pandas as pd
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from analyzer import analyze_last_candle
 
-print("✅ main.py started")
+from fastapi import FastAPI, Request
+from telegram.ext import Application
+from telegram.ext._webhookserver import WebhookServer
 
-# Start dummy HTTP server for Render
-class DummyHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"I'm alive!")
-
-def run_dummy_server():
-    print("🌐 Starting dummy HTTP server on port 10000")
-    server = HTTPServer(("0.0.0.0", 10000), DummyHandler)
-    server.serve_forever()
-
-threading.Thread(target=run_dummy_server, daemon=True).start()
-
-# Telegram bot config
 TOKEN = "7599460125:AAENWUkKQceP9O9kZn8y1SGQzaczmPpZWsA"
+WEBHOOK_PATH = "/webhook"
+PORT = int(os.environ.get("PORT", 10000))
+WEBHOOK_URL = "https://telegram-tradebot.onrender.com" + WEBHOOK_PATH  # اینو بعداً با URL واقعی عوض کن
 CHAT_ID_FILE = "chat_id.txt"
 CONFIG_FILE = "config.json"
 
-print("📂 Working directory:", os.getcwd())
-print("📄 Files in directory:", os.listdir())
-
+# Telegram handlers
 def load_config():
     with open(CONFIG_FILE, "r") as f:
         return json.load(f)
@@ -42,10 +27,9 @@ def save_config(config):
         json.dump(config, f)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    print("✅ /start command received")
     with open(CHAT_ID_FILE, "w") as f:
         f.write(str(update.effective_chat.id))
-    await update.message.reply_text("✅ Bot is active. It will check for new signals every 5 minutes.")
+    await update.message.reply_text("✅ Bot is live via Webhook.")
 
 async def view_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
     config = load_config()
@@ -63,12 +47,13 @@ async def set_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
         combos = [tuple(map(int, c.split(","))) for c in args[2:]]
         config = {"a": a, "b": b, "combos": combos}
         save_config(config)
-        await update.message.reply_text("✅ New settings saved.")
+        await update.message.reply_text("✅ Config updated.")
     except:
-        await update.message.reply_text("❌ Invalid format. Example:\n/setconfig 1 1 3,8 3,10 3,11")
+        await update.message.reply_text("❌ Invalid format. Use:
+/setconfig 1 1 3,8 3,10 3,11")
 
-async def signal_check_loop(app):
-    print("⏱️ Signal loop started")
+# Signal loop
+async def signal_check_loop(app: Application):
     while True:
         try:
             config = load_config()
@@ -85,25 +70,24 @@ async def signal_check_loop(app):
                 )
                 await app.bot.send_message(chat_id=chat_id, text=text)
         except Exception as e:
-            print("❌ Error in signal loop:", e)
+            print("❌ Signal loop error:", e)
         await asyncio.sleep(300)
 
+# Webhook launch
 async def main():
-    print("🚀 main() started")
-    application = ApplicationBuilder().token(TOKEN).build()
+    app = ApplicationBuilder().token(TOKEN).build()
 
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("viewconfig", view_config))
-    application.add_handler(CommandHandler("setconfig", set_config))
-    print("✅ Handlers added")
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("viewconfig", view_config))
+    app.add_handler(CommandHandler("setconfig", set_config))
 
-    async with application:
-        await application.start()
-        print("🤖 Bot started")
-        asyncio.create_task(signal_check_loop(application))
-        await application.updater.start_polling()
-        print("📡 Polling started")
-        await application.updater.idle()
+    await app.bot.set_webhook(url=WEBHOOK_URL)
+    asyncio.create_task(signal_check_loop(app))
+    await app.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        webhook_path=WEBHOOK_PATH,
+    )
 
 if __name__ == "__main__":
     asyncio.run(main())
