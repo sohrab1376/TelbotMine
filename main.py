@@ -46,8 +46,7 @@ async def set_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_config(config)
         await update.message.reply_text("✅ New settings saved.")
     except:
-        await update.message.reply_text("❌ Invalid format. Example:
-/setconfig 1 1 3,8 3,10 3,11")
+        await update.message.reply_text("❌ Invalid format. Example:\n/setconfig 1 1 3,8 3,10 3,11")
 
 app = FastAPI()
 
